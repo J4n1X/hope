@@ -33,7 +33,7 @@ extern "C" {
 #endif
 #endif
 
-#define HOPE_VERSION "0.1.3"
+#define HOPE_VERSION "0.1.4"
 
 
 /* individual types of arguments
@@ -91,17 +91,36 @@ typedef struct {
     enum hope_argtype_e type;
 } hope_result_t;
 
+/* A set of parameters. You can have multiple of these in one parser,
+ * but only the first matching one will get parsed.
+ */
+typedef struct {
+    const char *name;
+    size_t nparams;
+    size_t nresults;
+    hope_param_t *params;
+    hope_param_t *collector;
+    hope_result_t *results;
+} hope_set_t;
+
+
 /* Main data structure, will contain the parameters and
  * further information about the arguments parsed
+ * prog_name: Name of the program
+ * prog_desc: Description of the program's function
+ * sets: The parameter sets
+ * nsets: The amount of sets
+ * results: A pointer to the result array for the used set
+ * nresults: A pointer to the amount of results for the used set
  */ 
 typedef struct {
     const char *prog_name;
     const char *prog_desc;
-    hope_param_t *params;
-    hope_param_t *collector;
+    hope_set_t *sets;
+    size_t nsets;
     hope_result_t *results;
-    size_t nparams;
     size_t nresults;
+    const char *used_set_name;
 } hope_t;
 
 
@@ -110,7 +129,17 @@ typedef struct {
 //
 
 // Initialize the hope_param_t data structure
-HOPEDEF hope_param_t hope_param_init(const char *name, const char *help, enum hope_argtype_e type, int nargs);
+HOPEDEF hope_param_t hope_init_param(const char *name, const char *help, enum hope_argtype_e type, int nargs);
+
+//
+// hope_set_t functions
+//
+
+// Initialize a new set
+HOPEDEF hope_set_t hope_init_set(const char *set_name);
+
+// Add a new parameter to the set
+HOPEDEF int hope_add_param(hope_set_t *set, hope_param_t param);
 
 //
 // hope_t functions
@@ -120,12 +149,16 @@ HOPEDEF hope_param_t hope_param_init(const char *name, const char *help, enum ho
 HOPEDEF hope_t hope_init(const char *prog_name, const char *prog_desc);
 // Free the params in the hope data structure
 HOPEDEF void hope_free(hope_t *hope);
-// Generate and write the help message to stdout
-HOPEDEF void hope_print_help(hope_t *hope); 
-// Add a new parameter to the hope data structure
-HOPEDEF int hope_add_param(hope_t *hope, hope_param_t param);
-// Parse the command line arguments
-HOPEDEF int hope_parse(hope_t *hope, char *argv[]);
+// Generate and write the help message to the sink
+HOPEDEF void hope_print_help(hope_t *hope, FILE *sink); 
+// Add a new parameter set to the hope data structure
+HOPEDEF int hope_add_set(hope_t *hope, hope_set_t set);
+// Parse the command line arguments for the given set
+HOPEDEF int hope_parse_set(hope_set_t *set, char *args[]);
+// Parse all sets and use the results from the first one
+HOPEDEF int hope_parse(hope_t *hope, char *args[]);
+// A helper function that allows to you just pass argv for parsing
+HOPEDEF inline int hope_parse_argv(hope_t *hope, char *argv[]);
 
 // All these getter functions return -1 on error, and print an error message to stderr
 // Dest pointers will also be set to NULL on error
@@ -168,6 +201,7 @@ HOPEDEF const char *hope_get_single_string(hope_t *hope, const char *name);
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include <stdarg.h>
 
 // Get the string representation of an argument type
 HOPEDEF const char *hope_argtype_str(enum hope_argtype_e argtype) {
@@ -205,6 +239,18 @@ void hope_err_invalid_struct(const char *msg) {
     fprintf(stderr, HOPE_FMT_DEFAULT "\n", msg, HOPE_ERR_INVALID_STRUCT_MSG);
 }
 
+void hope_sys_err_any(int err, const char *msg){
+    switch(err){
+        case HOPE_ERR_ALLOC_FAILED_CODE:
+            hope_err_alloc(msg);
+            return;
+        case HOPE_ERR_INVALID_STRUCT_CODE:
+            hope_err_invalid_struct(msg);
+            return;
+    }
+    return;
+}
+
 // Error codes and messages for adding parameters
 #define HOPE_PARAMADD_ERR_CODE 0x20
 #define HOPE_PARAMADD_ERR_GENERIC_MSG "Error adding parameter"
@@ -226,6 +272,19 @@ void hope_paramadd_err_duplicate(const char *name) {
             name);
 }
 
+void hope_paramadd_err_any(int err, const char *msg) {
+    switch(err) {
+        case HOPE_PARAMADD_ERR_DUPLICATE_CODE:
+            hope_paramadd_err_duplicate(msg);
+            return;
+        case HOPE_PARAMADD_ERR_HASCOLLECTOR_CODE:
+            hope_paramadd_err_hascollector();
+            return;
+    }
+    return;
+}
+
+
 // Error codes and messages for parsing arguments
 #define HOPE_PARSE_ERR_CODE 0x30
 #define HOPE_PARSE_ERR_GENERIC_MSG "Error parsing arguments"
@@ -236,17 +295,24 @@ void hope_paramadd_err_duplicate(const char *name) {
 #define HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_CODE 0x33
 #define HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_MSG "Invalid amount of arguments passed for parameter"
 
-void hope_parse_err_param_miscount() {
+void hope_parse_err(const char *msg){
     fprintf(stderr, HOPE_FMT_DEFAULT "\n",
             HOPE_PARSE_ERR_GENERIC_MSG,
-            HOPE_PARSE_ERR_PARAM_MISCOUNT_MSG);
+            msg);
 }
 
-void hope_parse_err_param_unparsable(const char *name) {
+void hope_parse_err_param_miscount(const char *msg) {
+    fprintf(stderr, HOPE_FMT_DEFAULT "; %s\n",
+            HOPE_PARSE_ERR_GENERIC_MSG,
+            HOPE_PARSE_ERR_PARAM_MISCOUNT_MSG,
+            msg);
+}
+
+void hope_parse_err_param_unparsable(const char *msg) {
     fprintf(stderr, HOPE_FMT_DEFAULT ": %s\n",
             HOPE_PARSE_ERR_GENERIC_MSG,
             HOPE_PARSE_ERR_PARAM_UNPARSABLE_MSG,
-            name);
+            msg);
 }
 
 void hope_parse_err_param_arg_miscount(const char *name) {
@@ -256,6 +322,22 @@ void hope_parse_err_param_arg_miscount(const char *name) {
                 name);
 }
 
+void hope_parse_err_any(int err, const char *msg){
+    switch(err){
+        case HOPE_PARSE_ERR_CODE:
+            hope_parse_err(msg);
+            return;
+        case HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE:
+            hope_parse_err_param_miscount(msg);
+            return;
+        case HOPE_PARSE_ERR_PARAM_UNPARSABLE_CODE:
+            hope_parse_err_param_unparsable(msg);
+            return;
+        case HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_CODE:
+            hope_parse_err_param_arg_miscount(msg);
+            return;
+    }
+}
 
 // Error messages for types
 #define HOPE_TYPED_ERR_SWITCH_MSG "Argument is not a switch, but a"
@@ -270,30 +352,165 @@ void hope_parse_err_param_arg_miscount(const char *name) {
 #define HOPE_GET_ERR_NOEXIST_CODE 0x41
 #define HOPE_GET_ERR_NOEXIST_MSG "Parameter does not exist"
 #define HOPE_GET_ERR_TYPE_MISMATCH_CODE 0x42
-#define HOPE_GET_ERR_TYPE_MISMATCH_MSG "Type mismatch for parameter"
+#define HOPE_GET_ERR_TYPE_MISMATCH_MSG "Type mismatch;"
 
-void hope_get_err_noexist(const char *name){
+void hope_get_err_noexist(const char *msg){
     fprintf(stderr, HOPE_FMT_DEFAULT ": %s\n",
             HOPE_GET_ERR_GENERIC_MSG,
             HOPE_GET_ERR_NOEXIST_MSG,
-            name);
+            msg);
 }
 
-void hope_get_err_type(const char *name, enum hope_argtype_e type) {
-    fprintf(stderr, HOPE_FMT_DEFAULT " %s: %s %s\n",
+void hope_get_err_type_mismatch(const char *msg) {
+    fprintf(stderr, HOPE_FMT_DEFAULT " %s\n",
             HOPE_GET_ERR_GENERIC_MSG,
             HOPE_GET_ERR_TYPE_MISMATCH_MSG,
-            name,
-            HOPE_TYPED_ERR_SWITCH_MSG,
-            hope_argtype_str(type));
+            msg);
 }
+
+void hope_get_err_any(int err, const char *msg){
+    switch(err){
+    case HOPE_GET_ERR_NOEXIST_CODE:
+        hope_get_err_noexist(msg);
+        return;
+    case HOPE_GET_ERR_TYPE_MISMATCH_CODE:
+        hope_get_err_type_mismatch(msg);
+        return;
+    }
+    return;
+}
+
+
+// Error codes and messages for adding sets
+#define HOPE_SETADD_ERR_CODE 0x50
+#define HOPE_SETADD_ERR_GENERIC_MSG "Error adding set"
+#define HOPE_SETADD_ERR_DUPLICATE_CODE 0x51
+#define HOPE_SETADD_ERR_DUPLICATE_MSG "A set with the same name already exists"
+
+void hope_setadd_err_duplicate(const char *msg) {
+    fprintf(stderr, HOPE_FMT_DEFAULT ": %s\n", 
+            HOPE_SETADD_ERR_GENERIC_MSG, 
+            HOPE_SETADD_ERR_DUPLICATE_MSG,
+            msg);
+}
+
+void hope_setadd_err_any(int err, const char *msg) {
+    switch(err) {
+        case HOPE_SETADD_ERR_DUPLICATE_CODE:
+            hope_setadd_err_duplicate(msg);
+            return;
+    }
+    return;
+}
+
+// a function to concatenate strings given in varargs
+char *varstrcat(int count, ...)
+{
+    va_list ap;
+    size_t  len = 0;
+
+    if (count < 1)
+        return NULL;
+
+    // First, measure the total length required.
+    va_start(ap, count);
+    for (int i=0; i < count; i++) {
+        const char *s = va_arg(ap, char *);
+        len += strlen(s);
+    }
+    va_end(ap);
+
+    // Allocate return buffer.
+    char *ret = malloc(len + 1);
+    if (ret == NULL)
+        return NULL;
+
+    // Concatenate all the strings into the return buffer.
+    char *dst = ret;
+    va_start(ap, count);
+    for (int i=0; i < count; i++) {
+        const char *src = va_arg(ap, char *);
+
+        // This loop is a strcpy.
+        strcpy(dst, src);
+    }
+    va_end(ap);
+    return ret;
+}
+
+
+// This is a bit ugly, but it can count the variadic function count
+#ifdef _MSC_VER // Microsoft compilers
+
+#   define GET_ARG_COUNT(...)  INTERNAL_EXPAND_ARGS_PRIVATE(INTERNAL_ARGS_AUGMENTER(__VA_ARGS__))
+
+#   define INTERNAL_ARGS_AUGMENTER(...) unused, __VA_ARGS__
+#   define INTERNAL_EXPAND(x) x
+#   define INTERNAL_EXPAND_ARGS_PRIVATE(...) INTERNAL_EXPAND(INTERNAL_GET_ARG_COUNT_PRIVATE(__VA_ARGS__, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0))
+#   define INTERNAL_GET_ARG_COUNT_PRIVATE(_1_, _2_, _3_, _4_, _5_, _6_, _7_, _8_, _9_, _10_, _11_, _12_, _13_, _14_, _15_, _16_, _17_, _18_, _19_, _20_, _21_, _22_, _23_, _24_, _25_, _26_, _27_, _28_, _29_, _30_, _31_, _32_, _33_, _34_, _35_, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, count, ...) count
+
+#else // Non-Microsoft compilers
+
+#   define GET_ARG_COUNT(...) INTERNAL_GET_ARG_COUNT_PRIVATE(0, ## __VA_ARGS__, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#   define INTERNAL_GET_ARG_COUNT_PRIVATE(_0, _1_, _2_, _3_, _4_, _5_, _6_, _7_, _8_, _9_, _10_, _11_, _12_, _13_, _14_, _15_, _16_, _17_, _18_, _19_, _20_, _21_, _22_, _23_, _24_, _25_, _26_, _27_, _28_, _29_, _30_, _31_, _32_, _33_, _34_, _35_, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, count, ...) count
+
+#endif
+
+// This function will match any error encountered.
+#define hope_err_any(err, ...) (_hope_err_any((err), GET_ARG_COUNT(__VA_ARGS__), __VA_ARGS__))
+void _hope_err_any(int err, int count, ...){
+    va_list ap;
+    size_t  len = 0;
+
+    // First, measure the total length required.
+    va_start(ap, count);
+    for (int i=0; i < count; i++) {
+        const char *s = va_arg(ap, char *);
+        len += strlen(s);
+    }
+    va_end(ap);
+
+    // Allocate return buffer.
+    char *msg = malloc(len + 1);
+    assert(msg);
+
+    // Concatenate all the strings into the return buffer.
+    char *dst = msg;
+    va_start(ap, count);
+    for (int i=0; i < count; i++) {
+        const char *src = va_arg(ap, char *);
+
+        // This loop is a strcpy.
+        strcpy(dst, src);
+    }
+    va_end(ap);
+
+    switch(err & 0xF0){
+        case HOPE_ERR_CODE:
+            hope_sys_err_any(err, (const char*)msg);
+            return;
+        case HOPE_PARAMADD_ERR_CODE:
+            hope_paramadd_err_any(err, (const char*)msg);
+            return;
+        case HOPE_PARSE_ERR_CODE:
+            hope_parse_err_any(err, (const char*)msg);
+            return;
+        case HOPE_GET_ERR_CODE:
+            hope_get_err_any(err, (const char*)msg);
+            return;
+        case HOPE_SETADD_ERR_CODE:
+            hope_setadd_err_any(err, (const char*)msg);
+            return;
+    }
+}
+
 
 //
 // hope_param_t functions
 //
 
 // Initialize the hope data structure
-HOPEDEF hope_param_t hope_param_init(const char *name, const char *help, enum hope_argtype_e type, int nargs){
+HOPEDEF hope_param_t hope_init_param(const char *name, const char *help, enum hope_argtype_e type, int nargs){
     hope_param_t param = {
         .name = name,
         .help = help,
@@ -303,14 +520,53 @@ HOPEDEF hope_param_t hope_param_init(const char *name, const char *help, enum ho
     return param;
 }
 
-// Free the hope_param_t data structure
-//HOPEDEF void hope_param_free(hope_param_t *param){
-//    free((hope_param_t*) param);
-//}
-
 //
-// hope_t functions
-// 
+// hope_set_t functions
+//
+
+HOPEDEF hope_set_t hope_init_set(const char *set_name){
+    return (hope_set_t) {
+        .name = set_name,
+        .nparams = 0,
+        .params = NULL,
+        .collector = NULL,
+        .results = NULL,
+        .nresults = 0
+    };
+}
+
+// Add a new parameter to the set
+HOPEDEF int hope_add_param(hope_set_t *set, hope_param_t param){
+    if(param.name == NULL){
+        if(set->collector != NULL){
+            hope_paramadd_err_hascollector();
+            return HOPE_PARAMADD_ERR_HASCOLLECTOR_CODE;
+        }
+        set->collector = (hope_param_t*) malloc(sizeof(hope_param_t));
+        if(!set->collector){
+            hope_err_alloc(HOPE_PARAMADD_ERR_GENERIC_MSG);
+            return HOPE_ERR_ALLOC_FAILED_CODE;
+        }
+        *set->collector = param;
+    } else {
+        // search for a parameter with the same name
+        for(size_t i = 0; i < set->nparams; i++){
+            hope_param_t *cur_param = set->params + i;
+            if(strcmp(cur_param->name, param.name) == 0){
+                hope_paramadd_err_duplicate(param.name);
+                return HOPE_PARAMADD_ERR_DUPLICATE_CODE;
+            }
+        }
+        set->params = (hope_param_t*) realloc(set->params, (set->nparams + 1) * sizeof(hope_param_t));
+        if(!set->params){
+            hope_err_alloc(HOPE_PARAMADD_ERR_GENERIC_MSG);
+            return HOPE_ERR_ALLOC_FAILED_CODE;
+        }
+        set->params[set->nparams] = param;
+        set->nparams++;
+    }
+    return HOPE_SUCCESS_CODE;
+}
 
 // Initialize the hope data structure
 HOPEDEF hope_t hope_init(const char *prog_name, const char *prog_desc){
@@ -318,30 +574,37 @@ HOPEDEF hope_t hope_init(const char *prog_name, const char *prog_desc){
     hope_t hope = {
         .prog_name = prog_name,
         .prog_desc = prog_desc,
-        .params = NULL,
-        .collector = NULL,
+        .sets = NULL,
         .results = NULL,
-        .nparams = 0,
+        .nsets = 0,
         .nresults = 0,
+        .used_set_name = NULL
     };
     return hope;
 }
 // Free the params in the hope data structure
 HOPEDEF void hope_free(hope_t *hope){
-    if (hope->params) free(hope->params);
-    if (hope->collector) free(hope->collector);
-    if (hope->results){
-        for (size_t i = 0; i < hope->nresults; i++){
-            if(hope->results[i].type != HOPE_TYPE_SWITCH)
-                free(hope->results[i].value.strings);
+    if (hope->sets){
+        for(size_t i = 0; i < hope->nsets; i++){
+            hope_set_t *set = (hope_set_t*)(hope->sets + i);
+            if(set->params) free(set->params);
+            if(set->collector) free(set->collector);
+            if (set->results){
+                for (size_t i = 0; i < set->nresults; i++){
+                    if(set->results[i].type != HOPE_TYPE_SWITCH)
+                        free(set->results[i].value.strings);
+                }
+                free(set->results);
+            }
         }
-        free(hope->results);
+        free(hope->sets);
     }
-    hope->nparams = 0;
+    hope->nsets = 0;
+    hope->nresults = 0;
 }
 
-// Generate and write the help message to stdout
-HOPEDEF void hope_print_help(hope_t *hope){
+// Generate and write the help message to the sink
+HOPEDEF void hope_print_help(hope_t *hope, FILE *sink){
     const char *FMT_SWITCH_REQ = "%s ";
     const char *FMT_SWITCH_OPT = "(%s) ";
     const char *FMT_PARAM_REQ = "%s [%s] ";
@@ -351,82 +614,78 @@ HOPEDEF void hope_print_help(hope_t *hope){
     const char *FMT_PARAM_REQ_SPECIFIC = "%s [%s]{%u} ";
     
     if(hope->prog_desc)
-        fprintf(stdout, "%s\n", hope->prog_desc);
-    fprintf(stdout, "Usage: %s ", hope->prog_name);
+        fprintf(sink, "%s\n", hope->prog_desc);
+    fprintf(sink, "Usage: %s ", hope->prog_name);
 
     char *fmt_string = NULL;
-    for(size_t i = 0; i < hope->nparams; i++){
-        hope_param_t *cur_param = hope->params + i;
-        if(cur_param->type == HOPE_TYPE_SWITCH){
-            fmt_string = (char*)(cur_param->nargs == HOPE_ARGC_OPT ? FMT_SWITCH_OPT : FMT_SWITCH_REQ);
-            printf(fmt_string, cur_param->name);
-        } else {
-            switch(cur_param->nargs){
-                case HOPE_ARGC_MORE:
-                    fmt_string = (char*)FMT_PARAM_MORE;
-                    break;
-                case HOPE_ARGC_OPTMORE:
-                    fmt_string = (char*)FMT_PARAM_OPTMORE;
-                    break;
-                case HOPE_ARGC_OPT:
-                    fmt_string = (char*)FMT_PARAM_OPT;
-                    break;
-                default:
-                    assert(cur_param->nargs > 0);
-                    fmt_string = (char*)(cur_param->nargs > 1 ? FMT_PARAM_REQ_SPECIFIC : FMT_PARAM_REQ);
-                    break;
+    for(size_t i = 0; i < hope->nsets; i++){
+        hope_set_t *set = (hope_set_t*)(hope->sets + i);
+        for(size_t j = 0; j < set->nparams; j++){
+            hope_param_t *cur_param = (hope_param_t*)(set->params + j);
+            if(cur_param->type == HOPE_TYPE_SWITCH){
+                fmt_string = (char*)(cur_param->nargs == HOPE_ARGC_OPT ? FMT_SWITCH_OPT : FMT_SWITCH_REQ);
+                printf(fmt_string, cur_param->name);
+            } else {
+                switch(cur_param->nargs){
+                    case HOPE_ARGC_MORE:
+                        fmt_string = (char*)FMT_PARAM_MORE;
+                        break;
+                    case HOPE_ARGC_OPTMORE:
+                        fmt_string = (char*)FMT_PARAM_OPTMORE;
+                        break;
+                    case HOPE_ARGC_OPT:
+                        fmt_string = (char*)FMT_PARAM_OPT;
+                        break;
+                    default:
+                        assert(cur_param->nargs > 0);
+                        fmt_string = (char*)(cur_param->nargs > 1 ? FMT_PARAM_REQ_SPECIFIC : FMT_PARAM_REQ);
+                        break;
+                }
+                if(cur_param-> nargs > 1)
+                    printf(fmt_string, cur_param->name, hope_argtype_str(cur_param->type), cur_param->nargs);  
+                else
+                    printf(fmt_string, cur_param->name, hope_argtype_str(cur_param->type));
             }
-            if(cur_param-> nargs > 1)
-                printf(fmt_string, cur_param->name, hope_argtype_str(cur_param->type), cur_param->nargs);  
-            else
-                printf(fmt_string, cur_param->name, hope_argtype_str(cur_param->type));
-
+        }
+        if(i + 1 < hope->nsets) {
+            fprintf(sink, " | ");
         }
     }
-    fprintf(stdout, "\n");
-    for(size_t i = 0; i < hope->nparams; i++){
-        hope_param_t *cur_param = hope->params + i;
-        if(cur_param->help)
-            fprintf(stdout, "  %s: %s\n", cur_param->name, cur_param->help);
+    fprintf(sink, "\n");
+    for(size_t i = 0; i < hope->nsets; i++){
+        hope_set_t *set = (hope_set_t*)(hope->sets + i);
+        fprintf(sink, "Parameter set %s:\n", set->name);
+        for(size_t j = 0; j < set->nparams; j++){
+            hope_param_t *cur_param = (hope_param_t *)(set->params + j);
+            if(cur_param->help)
+                fprintf(sink, "  %s: %s\n", cur_param->name, cur_param->help);
+        }
     }
 }
-// Add a new parameter to the hope data structure
-HOPEDEF int hope_add_param(hope_t *hope, hope_param_t param){
-    if(param.name == NULL){
-        if(hope->collector != NULL){
-            hope_paramadd_err_hascollector();
-            return HOPE_PARAMADD_ERR_HASCOLLECTOR_CODE;
-        }
-        hope->collector = (hope_param_t*) malloc(sizeof(hope_param_t));
-        if(!hope->collector){
-            hope_err_alloc(HOPE_PARAMADD_ERR_GENERIC_MSG);
-            return HOPE_ERR_ALLOC_FAILED_CODE;
-        }
-        *hope->collector = param;
-    } else {
-        // search for a parameter with the same name
-        for(size_t i = 0; i < hope->nparams; i++){
-            hope_param_t *cur_param = hope->params + i;
-            if(strcmp(cur_param->name, param.name) == 0){
-                hope_paramadd_err_duplicate(param.name);
-                return HOPE_PARAMADD_ERR_DUPLICATE_CODE;
+
+HOPEDEF int hope_add_set(hope_t *hope, hope_set_t set) {
+    if(hope->sets){
+        for(size_t i = 0; i < hope->nsets; i++){
+            if(!strcmp(hope->sets[i].name, set.name)){
+                hope_setadd_err_duplicate(set.name);
+                return HOPE_SETADD_ERR_DUPLICATE_CODE;
             }
         }
-        hope->params = (hope_param_t*) realloc(hope->params, (hope->nparams + 1) * sizeof(hope_param_t));
-        if(!hope->params){
-            hope_err_alloc(HOPE_PARAMADD_ERR_GENERIC_MSG);
-            return HOPE_ERR_ALLOC_FAILED_CODE;
-        }
-        hope->params[hope->nparams] = param;
-        hope->nparams++;
     }
+    hope->sets = (hope_set_t*) realloc(hope->sets, (hope->nsets + 1) * sizeof(hope_set_t));
+    if(!hope->sets) {
+        hope_err_alloc(HOPE_SETADD_ERR_GENERIC_MSG);
+        return HOPE_ERR_ALLOC_FAILED_CODE;
+    }
+    hope->sets[hope->nsets] = set;
+    hope->nsets++;
     return HOPE_SUCCESS_CODE;
 }
 
 // Search for the parameter with the given name
-hope_param_t *hope_search_param(hope_t *hope, const char *name){
-    for(size_t i = 0; i < hope->nparams; i++){
-        hope_param_t *cur_param = hope->params + i;
+hope_param_t *hope_search_param(hope_set_t *set, const char *name){
+    for(size_t i = 0; i < set->nparams; i++){
+        hope_param_t *cur_param = set->params + i;
         if(name == NULL){
             if(cur_param->name == NULL)
                 return cur_param;
@@ -438,9 +697,9 @@ hope_param_t *hope_search_param(hope_t *hope, const char *name){
 }
 
 // Search for the result with the given name
-hope_result_t *hope_search_result(hope_t *hope, const char *name){
-    for(size_t i = 0; i < hope->nresults; i++){
-        hope_result_t *cur_result = hope->results + i;
+hope_result_t *hope_search_result(hope_result_t *results, size_t nresults, const char *name){
+    for(size_t i = 0; i < nresults; i++){
+        hope_result_t *cur_result =(hope_result_t*)(results + i);
         if(name == NULL){
             if(cur_result->name == NULL){
                 return cur_result;
@@ -457,12 +716,12 @@ int hope_parse_integer_into_result(const char *str, hope_result_t *result){
     char *endptr;
     long int next_val = strtol(str, &endptr, 10);
     if(endptr == str){
-        hope_parse_err_param_unparsable(result->name);
+        //hope_err_any(HOPE_PARSE_ERR_PARAM_UNPARSABLE_CODE, result->name);
         return HOPE_PARSE_ERR_PARAM_UNPARSABLE_CODE;
     }
     result->value.integers = (long int*) realloc(result->value.integers, (result->count + 1) * sizeof(long int));
     if(!result->value.integers){
-        hope_err_alloc(HOPE_PARSE_ERR_GENERIC_MSG);
+        hope_err_any(HOPE_ERR_ALLOC_FAILED_CODE, HOPE_PARSE_ERR_GENERIC_MSG);
         return HOPE_ERR_ALLOC_FAILED_CODE;
     }
     result->value.integers[result->count] = next_val;
@@ -475,12 +734,12 @@ int hope_parse_double_into_result(const char *str, hope_result_t *result){
     char *endptr;
     double next_val = strtod(str, &endptr);
     if(endptr == str){
-        hope_parse_err_param_unparsable(result->name);
+        //hope_err_any(HOPE_PARSE_ERR_PARAM_UNPARSABLE_CODE, result->name);
         return HOPE_PARSE_ERR_PARAM_UNPARSABLE_CODE;
     }
     result->value.doubles = (double*) realloc(result->value.doubles, (result->count + 1) * sizeof(double));
     if(!result->value.doubles){
-        hope_err_alloc(HOPE_PARSE_ERR_GENERIC_MSG);
+        hope_err_any(HOPE_ERR_ALLOC_FAILED_CODE, HOPE_PARSE_ERR_GENERIC_MSG);
         return HOPE_ERR_ALLOC_FAILED_CODE;
     }
     result->value.doubles[result->count] = next_val;
@@ -492,7 +751,6 @@ int hope_parse_double_into_result(const char *str, hope_result_t *result){
 int hope_parse_string_into_result(const char *str, hope_result_t *result){
     result->value.strings = (const char**) realloc(result->value.strings, (result->count + 1) * sizeof(char*));
     if(!result->value.strings){
-        hope_err_alloc(HOPE_PARSE_ERR_GENERIC_MSG);
         return HOPE_ERR_ALLOC_FAILED_CODE;
     }
     result->value.strings[result->count] = str;
@@ -517,47 +775,48 @@ int hope_parse_into_result(const char *str, hope_param_t *param, hope_result_t *
     }
 }
 
-int hope_push_parsed_result(hope_t *hope, hope_result_t result){
-    hope->results = (hope_result_t*) realloc(hope->results, (hope->nresults + 1) * sizeof(hope_result_t));
-    if(!hope->results){ 
-        hope_err_alloc(HOPE_PARSE_ERR_GENERIC_MSG);
+int hope_push_parsed_result(hope_set_t *set, hope_result_t result){
+    set->results = (hope_result_t*) realloc(set->results, (set->nresults + 1) * sizeof(hope_result_t));
+    if(!set->results){ 
+        hope_err_any(HOPE_ERR_ALLOC_FAILED_CODE, HOPE_PARSE_ERR_GENERIC_MSG);
         return HOPE_ERR_ALLOC_FAILED_CODE;
     }   
-    hope->results[hope->nresults] = result;
-    hope->nresults++;
+    set->results[set->nresults] = result;
+    set->nresults++;
     return HOPE_SUCCESS_CODE;
 }
 
 // Parse the command line arguments and store the results in the hope data structure
-HOPEDEF int hope_parse(hope_t *hope, char *argv[]){
+HOPEDEF int hope_parse_set(hope_set_t *set, char *args[]){
     // look for the collector first
     hope_result_t result = {0};
     int parse_code = 0;
+    char *error_msg = "";
     hope_result_t collector_result = {0};
     hope_param_t *param = NULL;
 
-    if(argv[0] == NULL){
-        if(hope->nparams > 0) {
+    if(args[0] == NULL){
+        if(set->nparams > 0) {
             // check if there are any required parameters
-            for(size_t i = 0; i < hope->nparams; i++){
-                hope_param_t *cur_param = hope->params + i;
+            for(size_t i = 0; i < set->nparams; i++){
+                hope_param_t *cur_param = set->params + i;
                 if(cur_param->nargs >= HOPE_ARGC_MORE && cur_param){
-                    hope_parse_err_param_miscount();
-                    return HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE;
+                    parse_code = HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE;
+                    goto defer;
                 }
             }
-        } else if(hope->collector){
-            if(hope->collector->nargs >= HOPE_ARGC_MORE && hope->collector->nargs != 0){ 
-                hope_parse_err_param_miscount();
-                return HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE;
+        } else if(set->collector){
+            if(set->collector->nargs >= HOPE_ARGC_MORE && set->collector->nargs != 0){ 
+                parse_code = HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE;
+                goto defer;
             }
         } 
     }
  
-    for(size_t i = 0; argv[i] != NULL; i++){
-        if(strcmp(argv[i], "--") == 0)
+    for(size_t i = 0; args[i] != NULL; i++){
+        if(strcmp(args[i], "--") == 0)
             continue; // skip the -- separator
-        param = hope_search_param(hope, argv[i]);
+        param = hope_search_param(set, args[i]);
         if(param){
             result.name = param->name;
             result.type = param->type;
@@ -566,45 +825,51 @@ HOPEDEF int hope_parse(hope_t *hope, char *argv[]){
             } else if(param->nargs == HOPE_ARGC_NONE){
                 continue;
             } else {
-                while(argv[i+1] != NULL){
-                    if(hope_search_param(hope, argv[i+1]) || strcmp(argv[i+1], "--") == 0)
+                while(args[i+1] != NULL){
+                    if(hope_search_param(set, args[i+1]) || strcmp(args[i+1], "--") == 0)
                         break;
 
-                    parse_code = hope_parse_into_result(argv[i+1], param, &result);
-                    if(parse_code != HOPE_SUCCESS_CODE)
-                        return parse_code;
+                    parse_code = hope_parse_into_result(args[i+1], param, &result);
+                    if(parse_code != HOPE_SUCCESS_CODE){
+                        error_msg = (char*)param->name;
+                        goto defer;
+                    }
                     i++;
                     if(param->nargs == HOPE_ARGC_OPT || param->nargs == (int)result.count)
                         break;
                 }
             }
-            hope_push_parsed_result(hope, result);
+            hope_push_parsed_result(set, result);
             result = (hope_result_t){0};
         } else {
-            if (hope->collector){
-                if((hope->collector->nargs == HOPE_ARGC_OPT && collector_result.count != 0) ||
-                    hope->collector->nargs == (int)collector_result.count){
+            if (set->collector){
+                if((set->collector->nargs == HOPE_ARGC_OPT && collector_result.count != 0) ||
+                    set->collector->nargs == (int)collector_result.count){
                     break;
                 }
-                parse_code = hope_parse_into_result(argv[i], hope->collector, &collector_result);
-                if(parse_code != HOPE_SUCCESS_CODE)
-                    return parse_code;
+                parse_code = hope_parse_into_result(args[i], set->collector, &collector_result);
+                if(parse_code != HOPE_SUCCESS_CODE){
+                    error_msg = "<collector>";
+                    goto defer;
+                }
             } else {
-                hope_parse_err_param_miscount();
-                return HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE;
+                parse_code = HOPE_PARSE_ERR_PARAM_MISCOUNT_CODE;
+                error_msg = "Too many arguments without a defined collector";
+                goto defer;
             }
         }
-        if(argv[i] == NULL) 
+        if(args[i] == NULL) 
             break;
     }
     // add empty entries for optional params, or error out if not enough arguments were provided earlier
-    for(size_t i = 0; i < hope->nparams; i++){
-        param = hope->params + i;
-        hope_result_t *param_result = hope_search_result(hope, param->name);
+    for(size_t i = 0; i < set->nparams; i++){
+        param = set->params + i;
+        hope_result_t *param_result = hope_search_result(set->results, set->nresults, param->name);
         if(param->nargs == HOPE_ARGC_MORE || param->nargs > HOPE_ARGC_NONE){
             if(param_result == NULL){
-                hope_parse_err_param_arg_miscount(param->name);
-                return HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_CODE;
+                error_msg = (char*)param->name;
+                parse_code = HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_CODE;
+                goto defer;
             }
         } else if((param->nargs == HOPE_ARGC_OPTMORE || 
                    param->nargs == HOPE_ARGC_OPT || 
@@ -616,30 +881,62 @@ HOPEDEF int hope_parse(hope_t *hope, char *argv[]){
                 .count = 0,
                 .value = {0}
             };
-            hope_push_parsed_result(hope, result);
+            hope_push_parsed_result(set, result);
         }
     }
-    if(hope->collector){
-        collector_result.type = hope->collector->type;
-        if ((hope->collector->nargs == HOPE_ARGC_MORE && collector_result.count <= 0) ||
-            (hope->collector->nargs > HOPE_ARGC_NONE && hope->collector->nargs != (int)collector_result.count)){
-            hope_parse_err_param_arg_miscount(hope->collector->name);
-            return HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_CODE;
+    if(set->collector){
+        collector_result.type = set->collector->type;
+        if ((set->collector->nargs == HOPE_ARGC_MORE && collector_result.count <= 0) ||
+            (set->collector->nargs > HOPE_ARGC_NONE && set->collector->nargs != (int)collector_result.count)){
+            error_msg = (char*)set->collector->name;
+            parse_code = HOPE_PARSE_ERR_PARAM_ARG_MISCOUNT_CODE;
+            goto defer;
         }
-        hope_push_parsed_result(hope, collector_result);
+        hope_push_parsed_result(set, collector_result);
     }
     return HOPE_SUCCESS_CODE;
+defer:
+    #ifdef HOPE_DEBUG
+    hope_err_any(parse_code, error_msg);
+    #else
+    (void)error_msg;
+    #endif
+    // deallocate the results, if they were allocated.
+    if(set->results) free(set->results);
+    set->results = NULL;
+    return parse_code;
+}
+
+HOPEDEF int hope_parse(hope_t *hope, char *args[]) {
+    for(size_t i = 0; i < hope->nsets; i++){
+        hope_set_t *set = (hope_set_t*)(hope->sets + i);
+        int parse_result = hope_parse_set(set, args);
+        if(parse_result == HOPE_SUCCESS_CODE){
+            hope->results = set->results;
+            hope->nresults = set->nresults;
+            hope->used_set_name = set->name;
+            return HOPE_SUCCESS_CODE;
+        }
+    }
+    hope_parse_err("No matching set found for the given parameters");
+    return HOPE_PARSE_ERR_PARAM_UNPARSABLE_CODE;
 }
 
 HOPEDEF int hope_get_switch(hope_t *hope, const char *name, bool *dest){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     if(!result){
         hope_get_err_noexist(name);
 		dest = NULL;
 		return -1;
     }
     if(result->type != HOPE_TYPE_SWITCH){
-        hope_get_err_type(name, HOPE_TYPE_SWITCH);
+        hope_err_any(HOPE_GET_ERR_TYPE_MISMATCH_CODE,
+            name,
+            " was expected to be of type ",
+            hope_argtype_str(HOPE_TYPE_SWITCH),
+            ", but is of type ",
+            hope_argtype_str(result->type)
+        );
 		dest = NULL;
 		return -1;
     }
@@ -647,16 +944,25 @@ HOPEDEF int hope_get_switch(hope_t *hope, const char *name, bool *dest){
     return 1;
 }
 
+HOPEDEF inline int hope_parse_argv(hope_t *hope, char *argv[]) {
+    return hope_parse(hope, argv + 1);
+}
 
 HOPEDEF int hope_get_integer(hope_t *hope, const char *name, long int **dest){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     if(!result){
         hope_get_err_noexist(name);
         dest = NULL;
 		return -1;
     }
     if(result->type != HOPE_TYPE_INTEGER){
-        hope_get_err_type(name, HOPE_TYPE_INTEGER);
+        hope_err_any(HOPE_GET_ERR_TYPE_MISMATCH_CODE,
+            name,
+            " was expected to be of type ",
+            hope_argtype_str(HOPE_TYPE_INTEGER),
+            ", but is of type ",
+            hope_argtype_str(result->type)
+        );
         dest = NULL;
 		return -1;
     }
@@ -665,14 +971,20 @@ HOPEDEF int hope_get_integer(hope_t *hope, const char *name, long int **dest){
 }
 
 HOPEDEF int hope_get_double(hope_t *hope, const char *name, double **dest){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     if(!result){
         hope_get_err_noexist(name);
         dest = NULL;
 		return -1;
     }
     if(result->type != HOPE_TYPE_DOUBLE){
-        hope_get_err_type(name, HOPE_TYPE_DOUBLE);
+        hope_err_any(HOPE_GET_ERR_TYPE_MISMATCH_CODE,
+            name,
+            " was expected to be of type ",
+            hope_argtype_str(HOPE_TYPE_DOUBLE),
+            ", but is of type ",
+            hope_argtype_str(result->type)
+        );
         dest = NULL;
 		return -1;
     }
@@ -681,14 +993,20 @@ HOPEDEF int hope_get_double(hope_t *hope, const char *name, double **dest){
 }
 
 HOPEDEF int hope_get_string(hope_t *hope, const char *name, const char ***dest){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     if(!result){
         hope_get_err_noexist(name);
         dest = NULL;
 		return -1;
     }
     if(result->type != HOPE_TYPE_STRING){
-        hope_get_err_type(name, HOPE_TYPE_STRING);
+        hope_err_any(HOPE_GET_ERR_TYPE_MISMATCH_CODE,
+            name,
+            " was expected to be of type ",
+            hope_argtype_str(HOPE_TYPE_STRING),
+            ", but is of type ",
+            hope_argtype_str(result->type)
+        );
         dest = NULL;
 		return -1;
     }
@@ -698,7 +1016,7 @@ HOPEDEF int hope_get_string(hope_t *hope, const char *name, const char ***dest){
 
 // Get a single switch or return false if it wasn't set.
 HOPEDEF bool hope_get_single_switch(hope_t *hope, const char *name){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     assert(result && "Queried parameter could not be found.");
     assert(result->type == HOPE_TYPE_SWITCH && "Queried parameter is not of switch type");
     assert(result->count < 2 && "Queried parameter contained more than 1 value.");
@@ -707,7 +1025,7 @@ HOPEDEF bool hope_get_single_switch(hope_t *hope, const char *name){
 
 // Get a single integer or return a default value if none were passed.
 HOPEDEF long int hope_get_single_integer(hope_t *hope, const char *name){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     assert(result && "Queried parameter could not be found.");
     assert(result->type == HOPE_TYPE_INTEGER && "Queried parameter is not of integer type");
     assert(result->count < 2 && "Queried parameter contained more than 1 value.");
@@ -716,7 +1034,7 @@ HOPEDEF long int hope_get_single_integer(hope_t *hope, const char *name){
 
 // Get a single double or return a default value if none were passed.
 HOPEDEF double hope_get_single_double(hope_t *hope, const char *name){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     assert(result && "Queried parameter could not be found.");
     assert(result->type == HOPE_TYPE_DOUBLE && "Queried parameter is not of double type");
     assert(result->count < 2 && "Queried parameter contained more than 1 value.");
@@ -725,7 +1043,7 @@ HOPEDEF double hope_get_single_double(hope_t *hope, const char *name){
 
 // Get a single string or return a default value if none were passed.
 HOPEDEF const char *hope_get_single_string(hope_t *hope, const char *name){
-    hope_result_t *result = hope_search_result(hope, name);
+    hope_result_t *result = hope_search_result(hope->results, hope->nresults, name);
     assert(result && "Queried parameter could not be found.");
     assert(result->type == HOPE_TYPE_STRING && "Queried parameter is not of string type");
     assert(result->count < 2 && "Queried parameter contained more than 1 value.");
