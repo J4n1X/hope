@@ -92,6 +92,6 @@ Get a single string or return a default value if none were passed.
 
 At any time, you can generate and print a help message to stdout by using:
 
-    void hope_print_help(hope_t *hope)
+    void hope_print_help(hope_t *hope, FILE *sink)
 
 The version of the library is stored as a string in the definition `HOPE_VERSION`
