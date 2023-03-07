@@ -22,9 +22,12 @@ Where prog_name is the name of the executable and prog_desc is an optional brief
 
     void hope_free(hope_t *hope)
 
-In order to add a parameter to the parser, you must first create one, you do this with:
+In order to add a parameter to the parser, you must first create a parameter set, you do this with:
 
-    hope_param_t hope_param_init(const char *name, const char *help, enum hope_argtype_e type, int nargs)
+    hope_set_t hope_init_set(const char *name)
+
+To this set, you can now add parameters. For this, use:
+    hope_param_t hope_init_param(const char *name, const char *help, enum hope_argtype_e type, int nargs)
 
 The parameter "help" is optional here.
 
@@ -42,15 +45,21 @@ To set the quantity of arguments a parameter accepts, either pass a positive num
   - `HOPE_ARGC_OPTMORE` Accepts zero(0) or more arguments (You can end the passing of arguments to the parameter with "--")
   - `HOPE_ARGC_OPT` Accepts zero(0) or one(1) arguments
 
-Having created a parameter structure, you can then add it to the parser by using:
+Having created a parameter structure, you can then add it to the set by using:
 
-    int hope_add_param(hope_t *hope, hope_param_t param)
+    int hope_add_param(hope_set_t *set, hope_param_t param)
+
+And this set can then be added to the parser with:
+    int hope_add_set(hope_t *hope, hope_set_t set)
 
 ### Parsing
 
-To parse a list of arguments, use:
+To parse a list of arguments, use either of these two functions:
 
-    int hope_parse(hope_t *hope, char *argv[])
+    int hope_parse(hope_t *hope, char *args[])
+    int hope_parse_argv(hope_t *hope, char *argv[])
+
+In order to find out which parameter set was parsed, you can access the `used_set_name` field in the `hope_t` structure.
 
 ### Getting Parameter values
 
